@@ -32,6 +32,7 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#0f172a;color:#f1f5f
 .log-meta{font-size:10px;color:#475569;margin-top:2px;font-family:monospace}
 #log-sec{display:none}
 .sent{background:#16a34a20;border:1px solid #22c55e40;border-radius:10px;padding:10px;margin-top:10px;font-size:13px;color:#4ade80;display:none}
+.progress{font-size:11px;color:#3b82f6;margin-top:4px;min-height:14px}
 </style>
 </head>
 <body>
@@ -41,6 +42,7 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#0f172a;color:#f1f5f
   <div class="lbl" id="lbl">Detectando ubicación...</div>
   <div class="lugar" id="lugar">—</div>
   <div class="coords" id="coords"></div>
+  <div class="progress" id="progress"></div>
   <div class="clock"><span>🕐</span><span id="clk"></span></div>
   <div class="btns" id="btns">
     <button class="btn b-wa" onclick="registrar()">📲 Registrar y enviar por WhatsApp</button>
@@ -71,24 +73,36 @@ function setRing(s){
   r.textContent=s==='spin'?'📍':s==='ok'?'✅':'❌';
 }
 
+function setProgress(txt){ document.getElementById('progress').textContent=txt; }
+
 async function getNombre(la,lo){
+  // Intenta con timeout extendido para señal lenta
+  const controller = new AbortController();
+  const timer = setTimeout(()=>controller.abort(), 20000); // 20 seg para señal lenta
   try{
-    const r=await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${la}&lon=${lo}&format=json&addressdetails=1&accept-language=es`,
-      {headers:{'User-Agent':'ZEFAR-Rondas/1.0'}});
+    const r=await fetch(
+      `https://nominatim.openstreetmap.org/reverse?lat=${la}&lon=${lo}&format=json&addressdetails=1&accept-language=es`,
+      {headers:{'User-Agent':'ZEFAR-Rondas/1.0'}, signal: controller.signal}
+    );
+    clearTimeout(timer);
     const d=await r.json();
     const a=d.address||{};
     return a.hamlet||a.neighbourhood||a.quarter||a.suburb||a.village||a.town||a.city_district||a.county||a.municipality||d.display_name?.split(',')[0]||null;
-  }catch{return null;}
+  }catch(e){
+    clearTimeout(timer);
+    return null;
+  }
 }
 
 async function detectar(){
   setRing('spin');
-  document.getElementById('lbl').textContent='Detectando ubicación...';
+  document.getElementById('lbl').textContent='Detectando ubicación GPS...';
   document.getElementById('lugar').textContent='—';
   document.getElementById('coords').textContent='';
   document.getElementById('btns').style.display='none';
   document.getElementById('msg').textContent='';
   document.getElementById('sent').style.display='none';
+  setProgress('');
 
   if(!navigator.geolocation){
     setRing('err');
@@ -96,25 +110,41 @@ async function detectar(){
     document.getElementById('msg').textContent='Este dispositivo no soporta geolocalización.';
     return;
   }
+
   navigator.geolocation.getCurrentPosition(async pos=>{
     lat=pos.coords.latitude.toFixed(6);
     lon=pos.coords.longitude.toFixed(6);
     document.getElementById('coords').textContent=`${lat}, ${lon}`;
-    document.getElementById('lbl').textContent='Consultando nombre del lugar...';
-    const nombre=await getNombre(lat,lon);
-    lugar=nombre||`${lat}, ${lon}`;
-    document.getElementById('lugar').textContent=lugar;
-    setRing('ok');
-    document.getElementById('lbl').textContent='Ubicación identificada';
+    document.getElementById('lbl').textContent='GPS obtenido. Buscando nombre...';
+    setProgress('Consultando con señal disponible...');
+
+    // Mostrar botones de inmediato con coordenadas por si la red falla
+    lugar=`${lat}, ${lon}`;
+    document.getElementById('lugar').textContent='Buscando nombre del lugar...';
     document.getElementById('btns').style.display='flex';
-    if(!nombre) document.getElementById('msg').textContent='Sin nombre disponible, se usarán coordenadas.';
+
+    const nombre=await getNombre(lat,lon);
+    if(nombre){
+      lugar=nombre;
+      document.getElementById('lugar').textContent=nombre;
+      setRing('ok');
+      document.getElementById('lbl').textContent='Ubicación identificada';
+      setProgress('');
+    } else {
+      lugar=`${lat}, ${lon}`;
+      document.getElementById('lugar').textContent=lugar;
+      setRing('ok');
+      document.getElementById('lbl').textContent='Ubicación por coordenadas GPS';
+      setProgress('Sin nombre disponible — se usarán coordenadas');
+    }
   },err=>{
     setRing('err');
     document.getElementById('lbl').textContent='Error de ubicación';
-    const m={1:'Permiso de GPS denegado. Actívalo en tu navegador.',2:'Señal GPS no disponible.',3:'Tiempo de espera agotado.'};
+    const m={1:'Permiso de GPS denegado. Actívalo en configuración.',2:'Señal GPS no disponible.',3:'Tiempo de espera agotado. Intenta de nuevo.'};
     document.getElementById('msg').textContent=m[err.code]||'Error desconocido.';
     document.getElementById('btns').style.display='flex';
-  },{enableHighAccuracy:true,timeout:15000,maximumAge:0});
+    setProgress('');
+  },{enableHighAccuracy:true,timeout:20000,maximumAge:0});
 }
 
 function registrar(){
@@ -129,10 +159,9 @@ function registrar(){
     `🌐 *Coords:* ${lat}, ${lon}\n` +
     `🗺️ https://maps.google.com/?q=${lat},${lon}`;
 
-  const url = `https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(mensaje)}`;
-  window.open(url, '_blank');
+  const url=`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(mensaje)}`;
+  window.open(url,'_blank');
 
-  // Guardar en log local
   try{
     const log=JSON.parse(localStorage.getItem('zefar_log')||'[]');
     log.unshift({lugar,lat,lon,hora:ahora,fecha});
