@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Rondas ZEFAR</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:#0f172a;color:#f1f5f9;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:1.25rem}
+.card{background:#1e293b;border:1px solid #334155;border-radius:18px;padding:2rem 1.5rem;max-width:380px;width:100%;text-align:center}
+.brand{font-size:12px;font-weight:700;letter-spacing:.12em;color:#64748b;text-transform:uppercase;margin-bottom:1.25rem}
+.ring{width:70px;height:70px;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 1rem;font-size:30px;transition:all .3s}
+.ring.spin{border:2px solid #3b82f6;background:#1d4ed815;animation:pulse 1.4s infinite}
+.ring.ok{border:2px solid #22c55e;background:#16a34a15}
+.ring.err{border:2px solid #ef4444;background:#dc262615}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.lbl{font-size:12px;color:#94a3b8;letter-spacing:.04em;margin-bottom:.4rem;min-height:16px}
+.lugar{font-size:21px;font-weight:700;color:#f1f5f9;line-height:1.3;margin-bottom:.35rem;min-height:28px}
+.coords{font-size:11px;color:#475569;font-family:monospace;margin-bottom:1.25rem;min-height:16px}
+.clock{display:inline-flex;align-items:center;gap:5px;background:#0f172a;border:1px solid #334155;border-radius:99px;padding:5px 13px;font-size:12px;color:#94a3b8;margin-bottom:1.25rem}
+.btns{display:none;flex-direction:column;gap:8px}
+.btn{padding:12px;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;border:none;transition:opacity .15s;width:100%}
+.btn:active{opacity:.75}
+.b-wa{background:#25d366;color:#fff}
+.b-map{background:#1d4ed820;color:#93c5fd;border:1px solid #1d4ed860}
+.b-re{background:#1e3a5f;color:#93c5fd;border:1px solid #1d4ed840}
+.msg{font-size:13px;color:#64748b;margin-top:.75rem;min-height:18px}
+.sep{border:none;border-top:1px solid #334155;margin:1.25rem 0}
+.log-title{font-size:11px;color:#64748b;text-align:left;margin-bottom:8px;letter-spacing:.06em;text-transform:uppercase}
+.log-item{background:#0f172a;border-radius:8px;padding:9px 11px;text-align:left;margin-bottom:7px}
+.log-place{font-size:13px;font-weight:600;color:#e2e8f0}
+.log-meta{font-size:10px;color:#475569;margin-top:2px;font-family:monospace}
+#log-sec{display:none}
+.sent{background:#16a34a20;border:1px solid #22c55e40;border-radius:10px;padding:10px;margin-top:10px;font-size:13px;color:#4ade80;display:none}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="brand">🛡️ ZEFAR · Control de Rondas</div>
+  <div class="ring spin" id="ring">📍</div>
+  <div class="lbl" id="lbl">Detectando ubicación...</div>
+  <div class="lugar" id="lugar">—</div>
+  <div class="coords" id="coords"></div>
+  <div class="clock"><span>🕐</span><span id="clk"></span></div>
+  <div class="btns" id="btns">
+    <button class="btn b-wa" onclick="registrar()">📲 Registrar y enviar por WhatsApp</button>
+    <button class="btn b-map" onclick="abrirMapa()">🗺️ Ver en Google Maps</button>
+    <button class="btn b-re" onclick="detectar()">🔄 Reintentar ubicación</button>
+  </div>
+  <div class="msg" id="msg"></div>
+  <div class="sent" id="sent">✅ Reporte enviado por WhatsApp</div>
+  <div id="log-sec">
+    <hr class="sep">
+    <div class="log-title">Rondas de hoy</div>
+    <div id="log-list"></div>
+  </div>
+</div>
+<script>
+const WA_NUMBER = '573142938398';
+let lat=null,lon=null,lugar='';
+
+function tick(){
+  const n=new Date();
+  document.getElementById('clk').textContent=n.toLocaleTimeString('es-CO',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+}
+setInterval(tick,1000);tick();
+
+function setRing(s){
+  const r=document.getElementById('ring');
+  r.className='ring '+s;
+  r.textContent=s==='spin'?'📍':s==='ok'?'✅':'❌';
+}
+
+async function getNombre(la,lo){
+  try{
+    const r=await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${la}&lon=${lo}&format=json&addressdetails=1&accept-language=es`,
+      {headers:{'User-Agent':'ZEFAR-Rondas/1.0'}});
+    const d=await r.json();
+    const a=d.address||{};
+    return a.hamlet||a.neighbourhood||a.quarter||a.suburb||a.village||a.town||a.city_district||a.county||a.municipality||d.display_name?.split(',')[0]||null;
+  }catch{return null;}
+}
+
+async function detectar(){
+  setRing('spin');
+  document.getElementById('lbl').textContent='Detectando ubicación...';
+  document.getElementById('lugar').textContent='—';
+  document.getElementById('coords').textContent='';
+  document.getElementById('btns').style.display='none';
+  document.getElementById('msg').textContent='';
+  document.getElementById('sent').style.display='none';
+
+  if(!navigator.geolocation){
+    setRing('err');
+    document.getElementById('lbl').textContent='GPS no disponible';
+    document.getElementById('msg').textContent='Este dispositivo no soporta geolocalización.';
+    return;
+  }
+  navigator.geolocation.getCurrentPosition(async pos=>{
+    lat=pos.coords.latitude.toFixed(6);
+    lon=pos.coords.longitude.toFixed(6);
+    document.getElementById('coords').textContent=`${lat}, ${lon}`;
+    document.getElementById('lbl').textContent='Consultando nombre del lugar...';
+    const nombre=await getNombre(lat,lon);
+    lugar=nombre||`${lat}, ${lon}`;
+    document.getElementById('lugar').textContent=lugar;
+    setRing('ok');
+    document.getElementById('lbl').textContent='Ubicación identificada';
+    document.getElementById('btns').style.display='flex';
+    if(!nombre) document.getElementById('msg').textContent='Sin nombre disponible, se usarán coordenadas.';
+  },err=>{
+    setRing('err');
+    document.getElementById('lbl').textContent='Error de ubicación';
+    const m={1:'Permiso de GPS denegado. Actívalo en tu navegador.',2:'Señal GPS no disponible.',3:'Tiempo de espera agotado.'};
+    document.getElementById('msg').textContent=m[err.code]||'Error desconocido.';
+    document.getElementById('btns').style.display='flex';
+  },{enableHighAccuracy:true,timeout:15000,maximumAge:0});
+}
+
+function registrar(){
+  const ahora=new Date().toLocaleTimeString('es-CO',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  const fecha=new Date().toLocaleDateString('es-CO');
+
+  const mensaje =
+    `🛡️ *RONDA ZEFAR*\n` +
+    `📍 *Lugar:* ${lugar}\n` +
+    `📅 *Fecha:* ${fecha}\n` +
+    `🕐 *Hora:* ${ahora}\n` +
+    `🌐 *Coords:* ${lat}, ${lon}\n` +
+    `🗺️ https://maps.google.com/?q=${lat},${lon}`;
+
+  const url = `https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(mensaje)}`;
+  window.open(url, '_blank');
+
+  // Guardar en log local
+  try{
+    const log=JSON.parse(localStorage.getItem('zefar_log')||'[]');
+    log.unshift({lugar,lat,lon,hora:ahora,fecha});
+    localStorage.setItem('zefar_log',JSON.stringify(log.slice(0,50)));
+  }catch{}
+
+  document.getElementById('sent').style.display='block';
+  mostrarLog();
+}
+
+function abrirMapa(){
+  if(lat&&lon) window.open(`https://maps.google.com/?q=${lat},${lon}`,'_blank');
+}
+
+function mostrarLog(){
+  try{
+    const log=JSON.parse(localStorage.getItem('zefar_log')||'[]');
+    if(!log.length)return;
+    const hoy=new Date().toLocaleDateString('es-CO');
+    const items=log.filter(i=>i.fecha===hoy);
+    if(!items.length)return;
+    document.getElementById('log-sec').style.display='block';
+    document.getElementById('log-list').innerHTML=items.map(i=>
+      `<div class="log-item"><div class="log-place">📍 ${i.lugar}</div><div class="log-meta">${i.hora} · ${i.lat}, ${i.lon}</div></div>`
+    ).join('');
+  }catch{}
+}
+
+detectar();
+mostrarLog();
+</script>
+</body>
+</html>
